@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #1a1a1a;
+    color: #ffffff;
+  }
+}
+
+.chess-board-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+}
+
+.square-light {
+  background-color: #ebecd0;
+}
+
+.square-dark {
+  background-color: #779556;
+}
+
+.square-highlight {
+  background-color: rgba(255, 255, 0, 0.4);
+}
+
+.square-last-move {
+  background-color: rgba(255, 255, 0, 0.2);
+}
