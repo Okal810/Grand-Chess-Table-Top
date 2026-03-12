@@ -28,11 +28,13 @@ import {
   Edit3,
   Play,
   Maximize,
-  Minimize
+  Minimize,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 
 // --- Subcomponents ---
-const PlayerArea = ({ color, timer, isTurn, onResign, onDrawOffer, drawOfferedByOpponent, onDrawAcceptClick, rotated }: any) => {
+const PlayerArea = ({ color, timer, isTurn, inCheck, onResign, onDrawOffer, drawOfferedByOpponent, onDrawAcceptClick, rotated }: any) => {
   return (
     <div className={`flex items-center justify-between w-full p-4 bg-zinc-800/80 backdrop-blur-md rounded-2xl shadow-lg border border-zinc-700 ${rotated ? 'rotate-180' : ''}`}>
       <div className="flex items-center gap-4">
@@ -40,6 +42,11 @@ const PlayerArea = ({ color, timer, isTurn, onResign, onDrawOffer, drawOfferedBy
           {Math.floor(timer / 60)}:{(timer % 60).toString().padStart(2, '0')}
         </div>
         {isTurn && <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.8)]" />}
+        {inCheck && (
+          <div className="px-3 py-1.5 text-sm font-extrabold tracking-wide uppercase rounded-lg bg-red-600/90 text-white shadow-[0_0_12px_rgba(220,38,38,0.6)] animate-pulse">
+            Check
+          </div>
+        )}
       </div>
       <div className="flex gap-3">
         {drawOfferedByOpponent ? (
@@ -182,6 +189,7 @@ export default function App() {
   const [showDrawConfirm, setShowDrawConfirm] = useState<Color | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Edit Mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -192,6 +200,58 @@ export default function App() {
   const turn = game.turn();
   const isGameOver = !isEditing && (game.isGameOver() || customGameOver !== null);
   const isCheck = game.inCheck();
+  const audioContextRef = React.useRef<AudioContext | null>(null);
+
+  const getAudioContext = useCallback(() => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new window.AudioContext();
+    }
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume();
+    }
+    return audioContextRef.current;
+  }, []);
+
+  const playSound = useCallback((type: 'move' | 'capture' | 'check' | 'gameOver') => {
+    if (!soundEnabled) return;
+
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    const beep = (freq: number, duration: number, gain = 0.04, delay = 0) => {
+      const osc = ctx.createOscillator();
+      const vol = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + delay);
+      vol.gain.setValueAtTime(0.0001, now + delay);
+      vol.gain.exponentialRampToValueAtTime(gain, now + delay + 0.01);
+      vol.gain.exponentialRampToValueAtTime(0.0001, now + delay + duration);
+      osc.connect(vol);
+      vol.connect(ctx.destination);
+      osc.start(now + delay);
+      osc.stop(now + delay + duration);
+    };
+
+    if (type === 'move') beep(540, 0.08);
+    if (type === 'capture') {
+      beep(420, 0.09, 0.05);
+      beep(320, 0.11, 0.04, 0.06);
+    }
+    if (type === 'check') {
+      beep(760, 0.08, 0.05);
+      beep(920, 0.1, 0.045, 0.07);
+    }
+    if (type === 'gameOver') {
+      beep(520, 0.1, 0.05);
+      beep(420, 0.12, 0.045, 0.08);
+      beep(320, 0.16, 0.04, 0.18);
+    }
+  }, [getAudioContext, soundEnabled]);
+
+
+  useEffect(() => {
+    if (isGameOver) playSound('gameOver');
+  }, [isGameOver, playSound]);
 
   // Fullscreen listener
   useEffect(() => {
@@ -387,6 +447,8 @@ export default function App() {
           setSelectedSquare(null);
           setMoveHistory(prev => [...prev, move.san]);
           setDrawOffer(null); // Reset draw offer on move
+          playSound(move.captured ? 'capture' : 'move');
+          if (game.inCheck()) playSound('check');
           if (!timerActive && timerMinutes !== null) setTimerActive(true);
           forceUpdate();
         } else {
@@ -424,6 +486,8 @@ export default function App() {
         setLastMove({ from: move.from, to: move.to });
         setMoveHistory(prev => [...prev, move.san]);
         setDrawOffer(null);
+        playSound(move.captured ? 'capture' : 'move');
+        if (game.inCheck()) playSound('check');
         if (!timerActive && timerMinutes !== null) setTimerActive(true);
         forceUpdate();
       }
@@ -508,6 +572,13 @@ export default function App() {
             <RotateCw size={20} />
           </button>
           <button 
+            onClick={() => setSoundEnabled(prev => !prev)}
+            className={`p-2 rounded-full transition-colors ${soundEnabled ? 'bg-emerald-700/40 text-emerald-300 hover:bg-emerald-700/60' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+            title={soundEnabled ? 'Sound On' : 'Sound Off'}
+          >
+            {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+          </button>
+          <button 
             onClick={() => setShowSettings(true)}
             className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-full transition-colors"
           >
@@ -547,6 +618,7 @@ export default function App() {
             color="b" 
             timer={timers.b} 
             isTurn={turn === 'b'} 
+            inCheck={isCheck && turn === 'b' && !isGameOver}
             onResign={() => handleResign('b')}
             onDrawOffer={() => handleDrawOffer('b')}
             drawOfferedByOpponent={drawOffer === 'w'}
@@ -746,6 +818,7 @@ export default function App() {
             color="w" 
             timer={timers.w} 
             isTurn={turn === 'w'} 
+            inCheck={isCheck && turn === 'w' && !isGameOver}
             onResign={() => handleResign('w')}
             onDrawOffer={() => handleDrawOffer('w')}
             drawOfferedByOpponent={drawOffer === 'b'}
