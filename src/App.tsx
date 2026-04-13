@@ -146,6 +146,17 @@ interface Piece {
   color: Color;
 }
 
+interface ModProjectile {
+  id: number;
+  emoji: string;
+  label: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  duration: number;
+}
+
 // --- Constants ---
 
 const PIECES: Record<string, string> = {
@@ -188,8 +199,11 @@ export default function App() {
   const [drawOffer, setDrawOffer] = useState<Color | null>(null);
   const [showDrawConfirm, setShowDrawConfirm] = useState<Color | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showModMenu, setShowModMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [nuclearDeterrence, setNuclearDeterrence] = useState(false);
+  const [modProjectiles, setModProjectiles] = useState<ModProjectile[]>([]);
 
   // Edit Mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -327,6 +341,104 @@ export default function App() {
 
   const handleDrawOffer = (color: Color) => {
     setDrawOffer(color);
+  };
+
+  const launchProjectileAnimation = useCallback((emoji: string, label: string, speed = 1) => {
+    const id = Date.now() + Math.floor(Math.random() * 10000);
+    const fromLeft = Math.random() > 0.5;
+    const projectile: ModProjectile = {
+      id,
+      emoji,
+      label,
+      fromX: fromLeft ? -12 : 112,
+      fromY: Math.random() * 100,
+      toX: Math.random() * 100,
+      toY: Math.random() * 100,
+      duration: speed,
+    };
+
+    setModProjectiles(prev => [...prev, projectile]);
+    setTimeout(() => {
+      setModProjectiles(prev => prev.filter(p => p.id !== id));
+    }, speed * 1000 + 350);
+  }, []);
+
+  const getEnemySquares = useCallback((enemyColor: Color) => {
+    const squares: string[] = [];
+    const b = game.board();
+
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const piece = b[r][c];
+        if (piece && piece.color === enemyColor && piece.type !== 'k') {
+          squares.push(`${FILES[c]}${RANKS[r]}`);
+        }
+      }
+    }
+
+    return squares;
+  }, [game]);
+
+  const removeRandomEnemyPieces = useCallback((amount: number) => {
+    const attacker = game.turn();
+    const defender: Color = attacker === 'w' ? 'b' : 'w';
+    const targets = getEnemySquares(defender);
+
+    if (targets.length === 0) {
+      return { removed: 0, attacker, defender };
+    }
+
+    const selectedTargets = [...targets]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, Math.min(amount, targets.length));
+
+    selectedTargets.forEach(square => game.remove(square as any));
+    forceUpdate();
+
+    return { removed: selectedTargets.length, attacker, defender };
+  }, [forceUpdate, game, getEnemySquares]);
+
+  const handleModAction = (action: 'lancet' | 'airstrike' | 'icbm' | 'nuke') => {
+    if (isGameOver || isEditing) return;
+
+    if (action === 'lancet') {
+      launchProjectileAnimation('🛸', 'Lancet', 0.9);
+      const result = removeRandomEnemyPieces(1);
+      setMoveHistory(prev => [...prev, `MOD: Lancet-Drohne (${result.removed} Ziel)`]);
+      playSound('capture');
+      return;
+    }
+
+    if (action === 'airstrike') {
+      launchProjectileAnimation('✈️', 'Luftangriff', 1);
+      const result = removeRandomEnemyPieces(2);
+      setMoveHistory(prev => [...prev, `MOD: Luftangriff (${result.removed} Ziele)`]);
+      playSound('capture');
+      return;
+    }
+
+    if (action === 'icbm') {
+      launchProjectileAnimation('🚀', 'ICBM', 1.1);
+      const result = removeRandomEnemyPieces(4);
+      setMoveHistory(prev => [...prev, `MOD: ICBM (${result.removed} Ziele)`]);
+      playSound('check');
+      return;
+    }
+
+    if (action === 'nuke') {
+      if (nuclearDeterrence) {
+        setCustomGameOver('Nukleare Abschreckung aktiv: Start verhindert, Patt durch Abschreckung.');
+        setTimerActive(false);
+        launchProjectileAnimation('🛡️', 'Abschreckung', 0.8);
+        playSound('gameOver');
+        return;
+      }
+
+      launchProjectileAnimation('☢️', 'Nuklearer Sprengkopf', 1.2);
+      const result = removeRandomEnemyPieces(16);
+      setMoveHistory(prev => [...prev, `MOD: Nuklearer Sprengkopf (${result.removed} Ziele)`]);
+      playSound('gameOver');
+    }
   };
 
   const exportPGN = () => {
@@ -584,6 +696,13 @@ export default function App() {
           >
             <Settings2 size={20} />
           </button>
+          <button
+            onClick={() => setShowModMenu(true)}
+            className="px-3 py-2 bg-red-700/80 hover:bg-red-600 rounded-full transition-colors text-sm font-bold"
+            title="Mod Menu"
+          >
+            Mod
+          </button>
           <button 
             onClick={toggleFullscreen}
             className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-full transition-colors"
@@ -629,6 +748,41 @@ export default function App() {
 
         {/* Board Area */}
         <div className="relative w-full aspect-square bg-zinc-900 rounded-lg shadow-2xl overflow-hidden border-8 border-zinc-800">
+          <div className="absolute inset-0 z-40 pointer-events-none">
+            <AnimatePresence>
+              {modProjectiles.map(projectile => (
+                <motion.div
+                  key={projectile.id}
+                  initial={{
+                    left: `${projectile.fromX}%`,
+                    top: `${projectile.fromY}%`,
+                    scale: 0.8,
+                    opacity: 0
+                  }}
+                  animate={{
+                    left: `${projectile.toX}%`,
+                    top: `${projectile.toY}%`,
+                    scale: [1, 1.1, 0.95],
+                    opacity: [0, 1, 1, 0],
+                    rotate: [0, 8, -8, 0]
+                  }}
+                  exit={{ opacity: 0, scale: 1.2 }}
+                  transition={{
+                    duration: projectile.duration,
+                    times: [0, 0.15, 0.8, 1],
+                    ease: 'easeInOut'
+                  }}
+                  className="absolute -translate-x-1/2 -translate-y-1/2"
+                >
+                  <div className="px-3 py-2 rounded-xl bg-black/55 border border-red-500/40 text-white shadow-[0_0_24px_rgba(239,68,68,0.6)]">
+                    <span className="text-2xl">{projectile.emoji}</span>
+                    <span className="ml-2 text-xs font-bold uppercase tracking-wider">{projectile.label}</span>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+
           <div className="chess-board-grid w-full h-full">
             {RANKS.map((rank, rIdx) => (
               FILES.map((file, fIdx) => {
@@ -844,6 +998,69 @@ export default function App() {
       </motion.div>
 
       {/* Settings Overlay (Global, not rotated) */}
+      <AnimatePresence>
+        {showModMenu && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[75] flex items-center justify-center bg-black/85 backdrop-blur-md"
+          >
+            <div className="bg-zinc-900 border border-zinc-700 p-8 rounded-3xl shadow-2xl flex flex-col gap-4 max-w-md w-full relative">
+              <button
+                onClick={() => setShowModMenu(false)}
+                className="absolute top-4 right-4 p-2 hover:bg-zinc-800 rounded-full"
+              >
+                <X size={20} />
+              </button>
+
+              <h2 className="text-2xl font-bold text-red-400">Mod Menu</h2>
+              <p className="text-sm text-zinc-400">
+                Spezialfähigkeiten für Fun-Matches: Lancet Drohne, Luftangriff, ICBM und nuklearer Sprengkopf.
+              </p>
+
+              <button
+                onClick={() => handleModAction('lancet')}
+                className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-left px-4 font-bold"
+              >
+                Lancet Drohne
+              </button>
+              <button
+                onClick={() => handleModAction('airstrike')}
+                className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-left px-4 font-bold"
+              >
+                Luftangriff
+              </button>
+              <button
+                onClick={() => handleModAction('icbm')}
+                className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-left px-4 font-bold"
+              >
+                ICBM
+              </button>
+              <button
+                onClick={() => handleModAction('nuke')}
+                className="w-full py-3 rounded-xl bg-red-700 hover:bg-red-600 text-left px-4 font-bold"
+              >
+                Nuklearer Sprengkopf
+              </button>
+
+              <div className="flex items-center justify-between mt-2 bg-zinc-800/80 rounded-xl p-3">
+                <div className="flex items-center gap-2 text-zinc-200">
+                  <AlertCircle size={18} className="text-yellow-400" />
+                  <span>Nukleare Abschreckung</span>
+                </div>
+                <button
+                  onClick={() => setNuclearDeterrence(prev => !prev)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-colors ${nuclearDeterrence ? 'bg-green-600 text-white' : 'bg-zinc-700 text-zinc-300'}`}
+                >
+                  {nuclearDeterrence ? 'Aktiv' : 'Aus'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {showSettings && (
           <motion.div 
