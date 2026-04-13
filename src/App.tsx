@@ -188,8 +188,10 @@ export default function App() {
   const [drawOffer, setDrawOffer] = useState<Color | null>(null);
   const [showDrawConfirm, setShowDrawConfirm] = useState<Color | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showModMenu, setShowModMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [nuclearDeterrence, setNuclearDeterrence] = useState(false);
 
   // Edit Mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -327,6 +329,79 @@ export default function App() {
 
   const handleDrawOffer = (color: Color) => {
     setDrawOffer(color);
+  };
+
+  const getEnemySquares = useCallback((enemyColor: Color) => {
+    const squares: string[] = [];
+    const b = game.board();
+
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const piece = b[r][c];
+        if (piece && piece.color === enemyColor && piece.type !== 'k') {
+          squares.push(`${FILES[c]}${RANKS[r]}`);
+        }
+      }
+    }
+
+    return squares;
+  }, [game]);
+
+  const removeRandomEnemyPieces = useCallback((amount: number) => {
+    const attacker = game.turn();
+    const defender: Color = attacker === 'w' ? 'b' : 'w';
+    const targets = getEnemySquares(defender);
+
+    if (targets.length === 0) {
+      return { removed: 0, attacker, defender };
+    }
+
+    const selectedTargets = [...targets]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, Math.min(amount, targets.length));
+
+    selectedTargets.forEach(square => game.remove(square as any));
+    forceUpdate();
+
+    return { removed: selectedTargets.length, attacker, defender };
+  }, [forceUpdate, game, getEnemySquares]);
+
+  const handleModAction = (action: 'lancet' | 'airstrike' | 'icbm' | 'nuke') => {
+    if (isGameOver || isEditing) return;
+
+    if (action === 'lancet') {
+      const result = removeRandomEnemyPieces(1);
+      setMoveHistory(prev => [...prev, `MOD: Lancet-Drohne (${result.removed} Ziel)`]);
+      playSound('capture');
+      return;
+    }
+
+    if (action === 'airstrike') {
+      const result = removeRandomEnemyPieces(2);
+      setMoveHistory(prev => [...prev, `MOD: Luftangriff (${result.removed} Ziele)`]);
+      playSound('capture');
+      return;
+    }
+
+    if (action === 'icbm') {
+      const result = removeRandomEnemyPieces(4);
+      setMoveHistory(prev => [...prev, `MOD: ICBM (${result.removed} Ziele)`]);
+      playSound('check');
+      return;
+    }
+
+    if (action === 'nuke') {
+      if (nuclearDeterrence) {
+        setCustomGameOver('Nukleare Abschreckung aktiv: Start verhindert, Patt durch Abschreckung.');
+        setTimerActive(false);
+        playSound('gameOver');
+        return;
+      }
+
+      const result = removeRandomEnemyPieces(16);
+      setMoveHistory(prev => [...prev, `MOD: Nuklearer Sprengkopf (${result.removed} Ziele)`]);
+      playSound('gameOver');
+    }
   };
 
   const exportPGN = () => {
@@ -583,6 +658,13 @@ export default function App() {
             className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-full transition-colors"
           >
             <Settings2 size={20} />
+          </button>
+          <button
+            onClick={() => setShowModMenu(true)}
+            className="px-3 py-2 bg-red-700/80 hover:bg-red-600 rounded-full transition-colors text-sm font-bold"
+            title="Mod Menu"
+          >
+            Mod
           </button>
           <button 
             onClick={toggleFullscreen}
@@ -844,6 +926,69 @@ export default function App() {
       </motion.div>
 
       {/* Settings Overlay (Global, not rotated) */}
+      <AnimatePresence>
+        {showModMenu && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[75] flex items-center justify-center bg-black/85 backdrop-blur-md"
+          >
+            <div className="bg-zinc-900 border border-zinc-700 p-8 rounded-3xl shadow-2xl flex flex-col gap-4 max-w-md w-full relative">
+              <button
+                onClick={() => setShowModMenu(false)}
+                className="absolute top-4 right-4 p-2 hover:bg-zinc-800 rounded-full"
+              >
+                <X size={20} />
+              </button>
+
+              <h2 className="text-2xl font-bold text-red-400">Mod Menu</h2>
+              <p className="text-sm text-zinc-400">
+                Spezialfähigkeiten für Fun-Matches: Lancet Drohne, Luftangriff, ICBM und nuklearer Sprengkopf.
+              </p>
+
+              <button
+                onClick={() => handleModAction('lancet')}
+                className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-left px-4 font-bold"
+              >
+                Lancet Drohne
+              </button>
+              <button
+                onClick={() => handleModAction('airstrike')}
+                className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-left px-4 font-bold"
+              >
+                Luftangriff
+              </button>
+              <button
+                onClick={() => handleModAction('icbm')}
+                className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-left px-4 font-bold"
+              >
+                ICBM
+              </button>
+              <button
+                onClick={() => handleModAction('nuke')}
+                className="w-full py-3 rounded-xl bg-red-700 hover:bg-red-600 text-left px-4 font-bold"
+              >
+                Nuklearer Sprengkopf
+              </button>
+
+              <div className="flex items-center justify-between mt-2 bg-zinc-800/80 rounded-xl p-3">
+                <div className="flex items-center gap-2 text-zinc-200">
+                  <AlertCircle size={18} className="text-yellow-400" />
+                  <span>Nukleare Abschreckung</span>
+                </div>
+                <button
+                  onClick={() => setNuclearDeterrence(prev => !prev)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-colors ${nuclearDeterrence ? 'bg-green-600 text-white' : 'bg-zinc-700 text-zinc-300'}`}
+                >
+                  {nuclearDeterrence ? 'Aktiv' : 'Aus'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {showSettings && (
           <motion.div 
