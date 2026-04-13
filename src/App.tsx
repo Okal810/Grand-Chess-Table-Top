@@ -146,6 +146,17 @@ interface Piece {
   color: Color;
 }
 
+interface ModProjectile {
+  id: number;
+  emoji: string;
+  label: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  duration: number;
+}
+
 // --- Constants ---
 
 const PIECES: Record<string, string> = {
@@ -192,6 +203,7 @@ export default function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [nuclearDeterrence, setNuclearDeterrence] = useState(false);
+  const [modProjectiles, setModProjectiles] = useState<ModProjectile[]>([]);
 
   // Edit Mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -331,6 +343,26 @@ export default function App() {
     setDrawOffer(color);
   };
 
+  const launchProjectileAnimation = useCallback((emoji: string, label: string, speed = 1) => {
+    const id = Date.now() + Math.floor(Math.random() * 10000);
+    const fromLeft = Math.random() > 0.5;
+    const projectile: ModProjectile = {
+      id,
+      emoji,
+      label,
+      fromX: fromLeft ? -12 : 112,
+      fromY: Math.random() * 100,
+      toX: Math.random() * 100,
+      toY: Math.random() * 100,
+      duration: speed,
+    };
+
+    setModProjectiles(prev => [...prev, projectile]);
+    setTimeout(() => {
+      setModProjectiles(prev => prev.filter(p => p.id !== id));
+    }, speed * 1000 + 350);
+  }, []);
+
   const getEnemySquares = useCallback((enemyColor: Color) => {
     const squares: string[] = [];
     const b = game.board();
@@ -370,6 +402,7 @@ export default function App() {
     if (isGameOver || isEditing) return;
 
     if (action === 'lancet') {
+      launchProjectileAnimation('🛸', 'Lancet', 0.9);
       const result = removeRandomEnemyPieces(1);
       setMoveHistory(prev => [...prev, `MOD: Lancet-Drohne (${result.removed} Ziel)`]);
       playSound('capture');
@@ -377,6 +410,7 @@ export default function App() {
     }
 
     if (action === 'airstrike') {
+      launchProjectileAnimation('✈️', 'Luftangriff', 1);
       const result = removeRandomEnemyPieces(2);
       setMoveHistory(prev => [...prev, `MOD: Luftangriff (${result.removed} Ziele)`]);
       playSound('capture');
@@ -384,6 +418,7 @@ export default function App() {
     }
 
     if (action === 'icbm') {
+      launchProjectileAnimation('🚀', 'ICBM', 1.1);
       const result = removeRandomEnemyPieces(4);
       setMoveHistory(prev => [...prev, `MOD: ICBM (${result.removed} Ziele)`]);
       playSound('check');
@@ -394,10 +429,12 @@ export default function App() {
       if (nuclearDeterrence) {
         setCustomGameOver('Nukleare Abschreckung aktiv: Start verhindert, Patt durch Abschreckung.');
         setTimerActive(false);
+        launchProjectileAnimation('🛡️', 'Abschreckung', 0.8);
         playSound('gameOver');
         return;
       }
 
+      launchProjectileAnimation('☢️', 'Nuklearer Sprengkopf', 1.2);
       const result = removeRandomEnemyPieces(16);
       setMoveHistory(prev => [...prev, `MOD: Nuklearer Sprengkopf (${result.removed} Ziele)`]);
       playSound('gameOver');
@@ -711,6 +748,41 @@ export default function App() {
 
         {/* Board Area */}
         <div className="relative w-full aspect-square bg-zinc-900 rounded-lg shadow-2xl overflow-hidden border-8 border-zinc-800">
+          <div className="absolute inset-0 z-40 pointer-events-none">
+            <AnimatePresence>
+              {modProjectiles.map(projectile => (
+                <motion.div
+                  key={projectile.id}
+                  initial={{
+                    left: `${projectile.fromX}%`,
+                    top: `${projectile.fromY}%`,
+                    scale: 0.8,
+                    opacity: 0
+                  }}
+                  animate={{
+                    left: `${projectile.toX}%`,
+                    top: `${projectile.toY}%`,
+                    scale: [1, 1.1, 0.95],
+                    opacity: [0, 1, 1, 0],
+                    rotate: [0, 8, -8, 0]
+                  }}
+                  exit={{ opacity: 0, scale: 1.2 }}
+                  transition={{
+                    duration: projectile.duration,
+                    times: [0, 0.15, 0.8, 1],
+                    ease: 'easeInOut'
+                  }}
+                  className="absolute -translate-x-1/2 -translate-y-1/2"
+                >
+                  <div className="px-3 py-2 rounded-xl bg-black/55 border border-red-500/40 text-white shadow-[0_0_24px_rgba(239,68,68,0.6)]">
+                    <span className="text-2xl">{projectile.emoji}</span>
+                    <span className="ml-2 text-xs font-bold uppercase tracking-wider">{projectile.label}</span>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+
           <div className="chess-board-grid w-full h-full">
             {RANKS.map((rank, rIdx) => (
               FILES.map((file, fIdx) => {
