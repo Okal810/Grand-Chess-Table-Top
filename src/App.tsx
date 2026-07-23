@@ -296,6 +296,7 @@ export default function App() {
 
   const lastProcessedMoveCountRef = useRef(0);
   const lastMoveTimeRef = useRef(Date.now());
+  const bongcloudStartRef = useRef<number | null>(null);
 
   // Sync game state
   const board = useMemo(() => game.board(), [game, trigger]);
@@ -462,10 +463,12 @@ export default function App() {
     const black = hist.filter((_, i) => i % 2 === 1).map(clean);
     if (!bongcloud.w && white[0] === 'e4' && white[1] === 'Ke2') {
       setBongcloud(prev => ({ ...prev, w: true }));
+      if (bongcloudStartRef.current === null) bongcloudStartRef.current = Date.now();
       playSound('bongcloud');
     }
     if (!bongcloud.b && black[0] === 'e5' && black[1] === 'Ke7') {
       setBongcloud(prev => ({ ...prev, b: true }));
+      if (bongcloudStartRef.current === null) bongcloudStartRef.current = Date.now();
       playSound('bongcloud');
     }
   }, [trigger, cursedMode, isEditing, game, bongcloud.w, bongcloud.b, playSound]);
@@ -499,10 +502,13 @@ export default function App() {
     return () => clearInterval(interval);
   }, [cursedMode, isGameOver, isEditing]);
 
-  // Bongcloud boss music: a looping heroic arpeggio for as long as the aura is active.
+  // Bongcloud boss music: a looping heroic arpeggio, capped at 30s total from
+  // the moment the buff first triggered (not restarted by re-renders).
   useEffect(() => {
     const active = (bongcloud.w || bongcloud.b) && soundEnabled && !isGameOver;
-    if (!active) return;
+    if (!active || bongcloudStartRef.current === null) return;
+    const remaining = 30000 - (Date.now() - bongcloudStartRef.current);
+    if (remaining <= 0) return;
 
     const playRiff = () => {
       const ctx = getAudioContext();
@@ -526,7 +532,11 @@ export default function App() {
 
     playRiff();
     const interval = setInterval(playRiff, 900);
-    return () => clearInterval(interval);
+    const stopTimeout = setTimeout(() => clearInterval(interval), remaining);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(stopTimeout);
+    };
   }, [bongcloud.w, bongcloud.b, soundEnabled, isGameOver, getAudioContext]);
 
   // Fullscreen listener
@@ -586,6 +596,7 @@ export default function App() {
     setTimerActive(false);
     setRookSacrifice(null);
     setBongcloud({ w: false, b: false });
+    bongcloudStartRef.current = null;
     setHallucination(null);
     setWheelSpinning(false);
     setWheelResult(null);
@@ -998,7 +1009,11 @@ export default function App() {
                 const isSelected = selectedSquare === square;
                 const isValidMove = validMoves.includes(square);
                 const isLastMove = lastMove && (lastMove.from === square || lastMove.to === square);
-                const hasBongcloudAura = !!piece && piece.type === 'k' && bongcloud[piece.color];
+                // The aura only shows while the king is still parked on its
+                // "second rank" (e2 for White, e7 for Black) -- step off it
+                // and the buff goes away, even though bongcloud[] stays true.
+                const hasBongcloudAura = !!piece && piece.type === 'k' && bongcloud[piece.color]
+                  && rank === (piece.color === 'w' ? '2' : '7');
 
                 return (
                   <div
