@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Chess, Move } from 'chess.js';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  RotateCw, 
-  RotateCcw, 
-  RefreshCw, 
-  ChevronLeft, 
+import {
+  RotateCw,
+  RotateCcw,
+  RefreshCw,
+  ChevronLeft,
   ChevronRight,
   Trophy,
   AlertCircle,
@@ -30,11 +30,15 @@ import {
   Maximize,
   Minimize,
   Volume2,
-  VolumeX
+  VolumeX,
+  Skull,
+  Pin,
+  Ghost,
+  Dices
 } from 'lucide-react';
 
 // --- Subcomponents ---
-const PlayerArea = ({ color, timer, isTurn, inCheck, onResign, onDrawOffer, drawOfferedByOpponent, onDrawAcceptClick, rotated }: any) => {
+const PlayerArea = ({ color, timer, isTurn, checkStatus, onResign, onDrawOffer, drawOfferedByOpponent, onDrawAcceptClick, rotated }: any) => {
   return (
     <div className={`flex items-center justify-between w-full p-4 bg-zinc-800/80 backdrop-blur-md rounded-2xl shadow-lg border border-zinc-700 ${rotated ? 'rotate-180' : ''}`}>
       <div className="flex items-center gap-4">
@@ -42,9 +46,14 @@ const PlayerArea = ({ color, timer, isTurn, inCheck, onResign, onDrawOffer, draw
           {Math.floor(timer / 60)}:{(timer % 60).toString().padStart(2, '0')}
         </div>
         {isTurn && <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.8)]" />}
-        {inCheck && (
+        {checkStatus === 'check' && (
           <div className="px-3 py-1.5 text-sm font-extrabold tracking-wide uppercase rounded-lg bg-red-600/90 text-white shadow-[0_0_12px_rgba(220,38,38,0.6)] animate-pulse">
             Check
+          </div>
+        )}
+        {checkStatus === 'exposed' && (
+          <div className="px-3 py-1.5 text-sm font-extrabold tracking-wide uppercase rounded-lg bg-orange-600/90 text-white shadow-[0_0_12px_rgba(234,88,12,0.7)] animate-pulse flex items-center gap-1.5">
+            <Skull size={16} /> King Exposed
           </div>
         )}
       </div>
@@ -166,6 +175,85 @@ const PIECES: Record<string, string> = {
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const RANKS = ['8', '7', '6', '5', '4', '3', '2', '1'];
 
+// --- Cursed Chess Mode ---
+
+const HALLUCINATION_LINES = [
+  "He has no idea, or has he?",
+  "Somewhere, a grandmaster weeps quietly.",
+  "The engine evaluation just left the chat.",
+  "Studies show 9 out of 10 long thinks end in a blunder anyway.",
+  "The pieces are starting to judge you.",
+  "Reader, he does not, in fact, see it.",
+  "A bead of sweat has been forming for several minutes now.",
+  "Somewhere a clock is still ticking. This is not it.",
+  "He is not stalling. He is 'calculating'.",
+];
+
+const WHEEL_SEGMENTS: { type: PieceSymbol; label: string }[] = [
+  { type: 'q', label: 'Queen' },
+  { type: 'r', label: 'Rook' },
+  { type: 'b', label: 'Bishop' },
+  { type: 'n', label: 'Knight' },
+  { type: 'p', label: 'Pawn (again!)' },
+];
+
+const WHEEL_COLORS = ['#7c3aed', '#dc2626', '#0891b2', '#ca8a04', '#16a34a'];
+
+function kingSquareOf(board: ReturnType<Chess['board']>, color: Color): Square | null {
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const piece = board[r][c];
+      if (piece && piece.type === 'k' && piece.color === color) {
+        return `${FILES[c]}${RANKS[r]}`;
+      }
+    }
+  }
+  return null;
+}
+
+const RAY_DIRECTIONS: { dr: number; dc: number; kind: 'line' | 'diag' }[] = [
+  { dr: -1, dc: 0, kind: 'line' }, { dr: 1, dc: 0, kind: 'line' },
+  { dr: 0, dc: -1, kind: 'line' }, { dr: 0, dc: 1, kind: 'line' },
+  { dr: -1, dc: -1, kind: 'diag' }, { dr: -1, dc: 1, kind: 'diag' },
+  { dr: 1, dc: -1, kind: 'diag' }, { dr: 1, dc: 1, kind: 'diag' },
+];
+
+function computePinnedSquares(board: ReturnType<Chess['board']>): Set<string> {
+  const pinned = new Set<string>();
+  for (const kingColor of ['w', 'b'] as Color[]) {
+    const kingSquare = kingSquareOf(board, kingColor);
+    if (!kingSquare) continue;
+    const kingC = FILES.indexOf(kingSquare[0]);
+    const kingR = RANKS.indexOf(kingSquare[1]);
+
+    for (const { dr, dc, kind } of RAY_DIRECTIONS) {
+      let r = kingR + dr;
+      let c = kingC + dc;
+      let blocker: string | null = null;
+
+      while (r >= 0 && r < 8 && c >= 0 && c < 8) {
+        const piece = board[r][c];
+        if (piece) {
+          if (piece.color === kingColor) {
+            if (blocker !== null) break; // a second friendly piece shields the first -- no pin
+            blocker = `${FILES[c]}${RANKS[r]}`;
+          } else {
+            if (blocker !== null) {
+              const attacksLine = kind === 'line' && (piece.type === 'r' || piece.type === 'q');
+              const attacksDiag = kind === 'diag' && (piece.type === 'b' || piece.type === 'q');
+              if (attacksLine || attacksDiag) pinned.add(blocker);
+            }
+            break; // enemy piece caps the ray either way
+          }
+        }
+        r += dr;
+        c += dc;
+      }
+    }
+  }
+  return pinned;
+}
+
 // --- Components ---
 
 export default function App() {
@@ -195,12 +283,55 @@ export default function App() {
   const [isEditing, setIsEditing] = useState(false);
   const [editTool, setEditTool] = useState<{ type: PieceSymbol, color: Color } | 'trash' | null>(null);
 
+  // --- Cursed Chess Mode state ---
+  const [cursedMode, setCursedMode] = useState(false);
+  const [rookSacrifice, setRookSacrifice] = useState<{ id: number; color: Color } | null>(null);
+  const [enPassantFlash, setEnPassantFlash] = useState(0);
+  const [queenLostToast, setQueenLostToast] = useState(0);
+  const [hallucination, setHallucination] = useState<string | null>(null);
+  const [bongcloud, setBongcloud] = useState<{ w: boolean; b: boolean }>({ w: false, b: false });
+  const [wheelSpinning, setWheelSpinning] = useState(false);
+  const [wheelRotation, setWheelRotation] = useState(0);
+  const [wheelResult, setWheelResult] = useState<PieceSymbol | null>(null);
+
+  const lastProcessedMoveCountRef = useRef(0);
+  const lastMoveTimeRef = useRef(Date.now());
+
   // Sync game state
   const board = useMemo(() => game.board(), [game, trigger]);
   const turn = game.turn();
-  const isGameOver = !isEditing && (game.isGameOver() || customGameOver !== null);
-  const isCheck = game.inCheck();
+  const isGameOver = !isEditing && (customGameOver !== null || (!cursedMode && game.isGameOver()));
+  const isCheck = !cursedMode && game.inCheck();
+  // Unlike game.inCheck() (which only ever reflects the side to move), cursed
+  // mode lets a king stay exposed across a whole extra turn, so both colors
+  // need to be checked independently of whose move it currently is.
+  const kingExposed = useMemo(() => {
+    if (!cursedMode || isEditing) return { w: false, b: false };
+    const wKingSquare = kingSquareOf(board, 'w');
+    const bKingSquare = kingSquareOf(board, 'b');
+    return {
+      w: wKingSquare ? game.isAttacked(wKingSquare, 'b') : false,
+      b: bKingSquare ? game.isAttacked(bKingSquare, 'w') : false,
+    };
+  }, [board, game, cursedMode, isEditing]);
   const audioContextRef = React.useRef<AudioContext | null>(null);
+
+  // Runs `fn` with king-safety legality checks disabled, so chess.js will generate
+  // and accept moves that leave a king in (or walk it into) check -- including
+  // capturing it outright. chess.js's `private` members are compile-time only, so
+  // this reaches the real prototype method at runtime.
+  const withCursedRules = useCallback(<T,>(fn: () => T): T => {
+    const anyGame = game as any;
+    const hadOwn = Object.prototype.hasOwnProperty.call(anyGame, '_isKingAttacked');
+    const own = anyGame._isKingAttacked;
+    anyGame._isKingAttacked = () => false;
+    try {
+      return fn();
+    } finally {
+      if (hadOwn) anyGame._isKingAttacked = own;
+      else delete anyGame._isKingAttacked;
+    }
+  }, [game]);
 
   const getAudioContext = useCallback(() => {
     if (!audioContextRef.current) {
@@ -212,16 +343,16 @@ export default function App() {
     return audioContextRef.current;
   }, []);
 
-  const playSound = useCallback((type: 'move' | 'capture' | 'check' | 'gameOver') => {
+  const playSound = useCallback((type: 'move' | 'capture' | 'check' | 'gameOver' | 'enPassant' | 'rookSacrifice' | 'queenLost' | 'bongcloud') => {
     if (!soundEnabled) return;
 
     const ctx = getAudioContext();
     const now = ctx.currentTime;
 
-    const beep = (freq: number, duration: number, gain = 0.04, delay = 0) => {
+    const beep = (freq: number, duration: number, gain = 0.04, delay = 0, type2: OscillatorType = 'sine') => {
       const osc = ctx.createOscillator();
       const vol = ctx.createGain();
-      osc.type = 'sine';
+      osc.type = type2;
       osc.frequency.setValueAtTime(freq, now + delay);
       vol.gain.setValueAtTime(0.0001, now + delay);
       vol.gain.exponentialRampToValueAtTime(gain, now + delay + 0.01);
@@ -246,12 +377,162 @@ export default function App() {
       beep(420, 0.12, 0.045, 0.08);
       beep(320, 0.16, 0.04, 0.18);
     }
+    if (type === 'enPassant') {
+      // A short, jarring "you weren't supposed to see that" stinger.
+      beep(180, 0.05, 0.07, 0, 'sawtooth');
+      beep(1400, 0.04, 0.05, 0.03, 'square');
+      beep(90, 0.18, 0.06, 0.05, 'sawtooth');
+    }
+    if (type === 'rookSacrifice') {
+      beep(110, 0.35, 0.07, 0, 'sawtooth');
+      beep(98, 0.4, 0.06, 0.05, 'sawtooth');
+      beep(80, 0.5, 0.06, 0.12, 'square');
+    }
+    if (type === 'queenLost') {
+      // Womp womp womp - descending muted trumpet.
+      beep(233, 0.22, 0.06, 0, 'sawtooth');
+      beep(220, 0.22, 0.06, 0.24, 'sawtooth');
+      beep(207, 0.22, 0.06, 0.48, 'sawtooth');
+      beep(196, 0.5, 0.07, 0.72, 'sawtooth');
+    }
+    if (type === 'bongcloud') {
+      beep(392, 0.15, 0.06, 0, 'sawtooth');
+      beep(494, 0.15, 0.06, 0.14, 'sawtooth');
+      beep(587, 0.3, 0.07, 0.28, 'sawtooth');
+    }
   }, [getAudioContext, soundEnabled]);
 
 
   useEffect(() => {
     if (isGameOver) playSound('gameOver');
   }, [isGameOver, playSound]);
+
+  // --- Cursed Chess Mode effects ---
+
+  // King-capture win condition + draw detection, standing in for checkmate/stalemate
+  // which no longer apply once check itself has been abolished.
+  useEffect(() => {
+    if (!cursedMode || isEditing || customGameOver !== null) return;
+    let wKing = false, bKing = false;
+    for (const row of board) {
+      for (const sq of row) {
+        if (sq?.type === 'k') {
+          if (sq.color === 'w') wKing = true; else bKing = true;
+        }
+      }
+    }
+    if (!wKing) {
+      setCustomGameOver('👑💀 Regicide! Black captured the King. Black wins.');
+      setTimerActive(false);
+    } else if (!bKing) {
+      setCustomGameOver('👑💀 Regicide! White captured the King. White wins.');
+      setTimerActive(false);
+    } else if (game.isInsufficientMaterial()) {
+      setCustomGameOver("Draw by insufficient material.");
+      setTimerActive(false);
+    } else if (game.isThreefoldRepetition()) {
+      setCustomGameOver("Draw by threefold repetition.");
+      setTimerActive(false);
+    } else if (game.isDrawByFiftyMoves()) {
+      setCustomGameOver("Draw by the fifty-move rule.");
+      setTimerActive(false);
+    }
+  }, [trigger, cursedMode, isEditing, customGameOver, board, game]);
+
+  // Rook sacrifice shake, en passant jumpscare, queen-lost trumpet.
+  // Reacts only to genuinely new moves (guarded by a processed-count ref) so
+  // Undo never replays an effect for a move it's rewinding past.
+  useEffect(() => {
+    if (!cursedMode || isEditing) return;
+    const hist = game.history({ verbose: true }) as Move[];
+    if (hist.length > lastProcessedMoveCountRef.current) {
+      const last = hist[hist.length - 1];
+      if (last.captured === 'r') {
+        setRookSacrifice({ id: Date.now(), color: last.color });
+        playSound('rookSacrifice');
+      }
+      if (last.isEnPassant()) {
+        setEnPassantFlash(id => id + 1);
+        playSound('enPassant');
+      }
+      if (last.captured === 'q') {
+        setQueenLostToast(id => id + 1);
+        playSound('queenLost');
+      }
+    }
+    lastProcessedMoveCountRef.current = hist.length;
+  }, [trigger, cursedMode, isEditing, game, playSound]);
+
+  // Bongcloud detection: 1.e4 Ke2 for White, 1...e5 2...Ke7 for Black.
+  useEffect(() => {
+    if (!cursedMode || isEditing) return;
+    const hist = game.history() as string[];
+    const clean = (s?: string) => (s ?? '').replace(/[+#]$/, '');
+    const white = hist.filter((_, i) => i % 2 === 0).map(clean);
+    const black = hist.filter((_, i) => i % 2 === 1).map(clean);
+    if (!bongcloud.w && white[0] === 'e4' && white[1] === 'Ke2') {
+      setBongcloud(prev => ({ ...prev, w: true }));
+      playSound('bongcloud');
+    }
+    if (!bongcloud.b && black[0] === 'e5' && black[1] === 'Ke7') {
+      setBongcloud(prev => ({ ...prev, b: true }));
+      playSound('bongcloud');
+    }
+  }, [trigger, cursedMode, isEditing, game, bongcloud.w, bongcloud.b, playSound]);
+
+  // Long-think hallucinations: reset the thinking clock on every move/edit,
+  // then surface cycling flavor text once a turn drags past 60s.
+  useEffect(() => {
+    lastMoveTimeRef.current = Date.now();
+    setHallucination(null);
+  }, [trigger]);
+
+  useEffect(() => {
+    if (!cursedMode || isGameOver || isEditing) {
+      setHallucination(null);
+      return;
+    }
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - lastMoveTimeRef.current;
+      if (elapsed > 60000) {
+        const idx = Math.floor(elapsed / 9000) % HALLUCINATION_LINES.length;
+        setHallucination(HALLUCINATION_LINES[idx]);
+      } else {
+        setHallucination(null);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [cursedMode, isGameOver, isEditing]);
+
+  // Bongcloud boss music: a looping heroic arpeggio for as long as the aura is active.
+  useEffect(() => {
+    const active = (bongcloud.w || bongcloud.b) && soundEnabled && !isGameOver;
+    if (!active) return;
+
+    const playRiff = () => {
+      const ctx = getAudioContext();
+      const now = ctx.currentTime;
+      const notes = [220, 277.18, 329.63, 440];
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const vol = ctx.createGain();
+        osc.type = 'sawtooth';
+        const t = now + i * 0.18;
+        osc.frequency.setValueAtTime(freq, t);
+        vol.gain.setValueAtTime(0.0001, t);
+        vol.gain.exponentialRampToValueAtTime(0.05, t + 0.02);
+        vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+        osc.connect(vol);
+        vol.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.17);
+      });
+    };
+
+    playRiff();
+    const interval = setInterval(playRiff, 900);
+    return () => clearInterval(interval);
+  }, [bongcloud.w, bongcloud.b, soundEnabled, isGameOver, getAudioContext]);
 
   // Fullscreen listener
   useEffect(() => {
@@ -308,7 +589,19 @@ export default function App() {
       setTimers({ w: timerMinutes * 60, b: timerMinutes * 60 });
     }
     setTimerActive(false);
+    setRookSacrifice(null);
+    setBongcloud({ w: false, b: false });
+    setHallucination(null);
+    setWheelSpinning(false);
+    setWheelResult(null);
+    lastProcessedMoveCountRef.current = 0;
+    lastMoveTimeRef.current = Date.now();
     forceUpdate();
+  };
+
+  const toggleCursedMode = () => {
+    setCursedMode(prev => !prev);
+    resetGame();
   };
 
   const applyTimerSettings = (minutes: number | null) => {
@@ -386,8 +679,9 @@ export default function App() {
   const setTurnForEdit = (color: Color) => {
     const tokens = game.fen().split(' ');
     tokens[1] = color;
-    const success = game.load(tokens.join(' '));
-    if (!success) {
+    try {
+      game.load(tokens.join(' '));
+    } catch (e) {
       alert("Cannot change turn. Ensure the board position is valid (e.g. both kings present).");
     }
     forceUpdate();
@@ -433,7 +727,9 @@ export default function App() {
 
       try {
         // Check if move is valid (including promotion check)
-        const moves = game.moves({ square: selectedSquare as any, verbose: true });
+        const moves = cursedMode
+          ? withCursedRules(() => game.moves({ square: selectedSquare as any, verbose: true }))
+          : game.moves({ square: selectedSquare as any, verbose: true });
         const isPromotion = moves.some(m => m.to === square && m.flags.includes('p'));
 
         if (isPromotion) {
@@ -441,14 +737,14 @@ export default function App() {
           return;
         }
 
-        const move = game.move(moveAttempt);
+        const move = cursedMode ? withCursedRules(() => game.move(moveAttempt)) : game.move(moveAttempt);
         if (move) {
           setLastMove({ from: move.from, to: move.to });
           setSelectedSquare(null);
           setMoveHistory(prev => [...prev, move.san]);
           setDrawOffer(null); // Reset draw offer on move
           playSound(move.captured ? 'capture' : 'move');
-          if (game.inCheck()) playSound('check');
+          if (!cursedMode && game.inCheck()) playSound('check');
           if (!timerActive && timerMinutes !== null) setTimerActive(true);
           forceUpdate();
         } else {
@@ -475,19 +771,33 @@ export default function App() {
   const handlePromotion = (pieceType: PieceSymbol) => {
     if (!showPromotion) return;
 
+    // chess.js has no concept of "promoting to a pawn" -- the wheel's joke
+    // outcome is applied by promoting to a queen at the engine level, then
+    // immediately swapping the piece back to a pawn on the board.
+    const stayPawn = pieceType === 'p';
+    const engineType = stayPawn ? 'q' : pieceType;
+
     try {
-      const move = game.move({
+      const moveFn = () => game.move({
         from: showPromotion.from,
         to: showPromotion.to,
-        promotion: pieceType,
+        promotion: engineType,
       });
+      const move = cursedMode ? withCursedRules(moveFn) : moveFn();
 
       if (move) {
+        let san = move.san;
+        if (stayPawn) {
+          const promoted = game.get(showPromotion.to as any)!;
+          game.remove(showPromotion.to as any);
+          game.put({ type: 'p', color: promoted.color }, showPromotion.to as any);
+          san = san.replace('=Q', '=P');
+        }
         setLastMove({ from: move.from, to: move.to });
-        setMoveHistory(prev => [...prev, move.san]);
+        setMoveHistory(prev => [...prev, san]);
         setDrawOffer(null);
         playSound(move.captured ? 'capture' : 'move');
-        if (game.inCheck()) playSound('check');
+        if (!cursedMode && game.inCheck()) playSound('check');
         if (!timerActive && timerMinutes !== null) setTimerActive(true);
         forceUpdate();
       }
@@ -496,6 +806,31 @@ export default function App() {
     }
     setShowPromotion(null);
     setSelectedSquare(null);
+    setWheelSpinning(false);
+    setWheelResult(null);
+  };
+
+  const spinPromotionWheel = () => {
+    if (wheelSpinning) return;
+    setWheelSpinning(true);
+    setWheelResult(null);
+    const resultIndex = Math.floor(Math.random() * WHEEL_SEGMENTS.length);
+    const segmentAngle = 360 / WHEEL_SEGMENTS.length;
+    const jitter = (Math.random() - 0.5) * (segmentAngle * 0.6);
+    const spins = 5 + Math.floor(Math.random() * 3);
+    setWheelRotation(prev => {
+      const currentNormalized = ((prev % 360) + 360) % 360;
+      // Land the chosen segment's center under the top pointer, ignoring the
+      // wheel's current rest angle, then add the extra full spins on top.
+      const targetNormalized = (360 - resultIndex * segmentAngle) % 360;
+      const delta = ((targetNormalized - currentNormalized) + 360) % 360;
+      return prev + delta + spins * 360 + jitter;
+    });
+    setTimeout(() => {
+      const result = WHEEL_SEGMENTS[resultIndex].type;
+      setWheelResult(result);
+      setTimeout(() => handlePromotion(result), 700);
+    }, 2600);
   };
 
   const rotateBoard = (dir: 'cw' | 'ccw') => {
@@ -517,8 +852,20 @@ export default function App() {
   // Get valid moves for highlighting
   const validMoves = useMemo(() => {
     if (!selectedSquare) return [];
-    return game.moves({ square: selectedSquare as any, verbose: true }).map(m => m.to);
-  }, [selectedSquare, game]);
+    const moves = cursedMode
+      ? withCursedRules(() => game.moves({ square: selectedSquare as any, verbose: true }))
+      : game.moves({ square: selectedSquare as any, verbose: true });
+    return moves.map(m => m.to);
+  }, [selectedSquare, game, cursedMode, withCursedRules]);
+
+  // Pin detection (feature works in both standard and cursed chess): ray-cast
+  // out from each king along the 8 directions and flag the first own piece hit
+  // if a same-line enemy slider (rook/queen on files/ranks, bishop/queen on
+  // diagonals) stands beyond it with nothing else in between.
+  const pinnedSquares = useMemo(() => {
+    if (isEditing) return new Set<string>(); // board may be mid-setup (missing a king, etc.)
+    return computePinnedSquares(board);
+  }, [board, isEditing]);
 
   return (
     <div className="flex flex-col items-center justify-center w-full min-h-screen h-[100dvh] bg-[#1a1a1a] text-white overflow-hidden relative select-none">
@@ -571,7 +918,14 @@ export default function App() {
           >
             <RotateCw size={20} />
           </button>
-          <button 
+          <button
+            onClick={toggleCursedMode}
+            className={`p-2 rounded-full transition-colors ${cursedMode ? 'bg-purple-700/50 text-purple-300 shadow-[0_0_10px_rgba(147,51,234,0.6)] animate-pulse' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+            title={cursedMode ? 'Cursed Chess Mode: ON (click to disable)' : 'Enable Cursed Chess Mode'}
+          >
+            <Skull size={20} />
+          </button>
+          <button
             onClick={() => setSoundEnabled(prev => !prev)}
             className={`p-2 rounded-full transition-colors ${soundEnabled ? 'bg-emerald-700/40 text-emerald-300 hover:bg-emerald-700/60' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
             title={soundEnabled ? 'Sound On' : 'Sound Off'}
@@ -614,11 +968,11 @@ export default function App() {
       >
         {/* Black Player Area */}
         {!isEditing && (
-          <PlayerArea 
-            color="b" 
-            timer={timers.b} 
-            isTurn={turn === 'b'} 
-            inCheck={isCheck && turn === 'b' && !isGameOver}
+          <PlayerArea
+            color="b"
+            timer={timers.b}
+            isTurn={turn === 'b'}
+            checkStatus={isGameOver ? null : kingExposed.b ? 'exposed' : isCheck && turn === 'b' ? 'check' : null}
             onResign={() => handleResign('b')}
             onDrawOffer={() => handleDrawOffer('b')}
             drawOfferedByOpponent={drawOffer === 'w'}
@@ -628,7 +982,12 @@ export default function App() {
         )}
 
         {/* Board Area */}
-        <div className="relative w-full aspect-square bg-zinc-900 rounded-lg shadow-2xl overflow-hidden border-8 border-zinc-800">
+        <motion.div
+          key={rookSacrifice?.id ?? 'still'}
+          animate={rookSacrifice ? { x: [0, -14, 14, -14, 14, -8, 8, -4, 4, 0], y: [0, 6, -6, 4, -4, 2, -2, 0, 0, 0] } : { x: 0, y: 0 }}
+          transition={{ duration: 0.55, ease: 'easeInOut' }}
+          className="relative w-full aspect-square bg-zinc-900 rounded-lg shadow-2xl overflow-hidden border-8 border-zinc-800"
+        >
           <div className="chess-board-grid w-full h-full">
             {RANKS.map((rank, rIdx) => (
               FILES.map((file, fIdx) => {
@@ -638,20 +997,23 @@ export default function App() {
                 const isSelected = selectedSquare === square;
                 const isValidMove = validMoves.includes(square);
                 const isLastMove = lastMove && (lastMove.from === square || lastMove.to === square);
+                const isPinned = pinnedSquares.has(square);
+                const hasBongcloudAura = !!piece && piece.type === 'k' && bongcloud[piece.color];
 
                 return (
-                  <div 
+                  <div
                     key={square}
                     onClick={() => handleSquareClick(square)}
                     className={`
                       relative flex items-center justify-center cursor-pointer touch-none
                       ${isLight ? 'square-light' : 'square-dark'}
                       ${isSelected ? 'ring-4 ring-inset ring-blue-400 z-10' : ''}
+                      ${isPinned ? 'ring-2 ring-inset ring-red-500/70' : ''}
                     `}
                   >
                     {/* Last Move Highlight */}
                     {isLastMove && <div className="absolute inset-0 square-last-move pointer-events-none" />}
-                    
+
                     {/* Valid Move Indicator */}
                     {isValidMove && (
                       <div className={`
@@ -660,25 +1022,49 @@ export default function App() {
                       `} />
                     )}
 
+                    {/* Pinned Piece Badge */}
+                    {isPinned && (
+                      <div className="absolute top-0.5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-600/90 text-white text-[9px] font-extrabold uppercase tracking-wide shadow-[0_0_8px_rgba(220,38,38,0.7)] pointer-events-none">
+                        <Pin size={9} /> Pinned
+                      </div>
+                    )}
+
+                    {/* Bongcloud King Aura */}
+                    {hasBongcloudAura && (
+                      <motion.div
+                        className="absolute inset-0 pointer-events-none z-10 rounded-full"
+                        style={{ boxShadow: '0 0 18px 8px rgba(250,204,21,0.55)' }}
+                        animate={{ opacity: [0.6, 1, 0.6] }}
+                        transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+                      />
+                    )}
+
                     {/* Piece */}
                     <AnimatePresence mode="popLayout">
                       {piece && (
                         <motion.img
                           key={`${square}-${piece.type}-${piece.color}`}
                           initial={{ scale: 0.5, opacity: 0, rotate: 0 }}
-                          animate={{ 
-                            scale: 1, 
+                          animate={{
+                            scale: 1,
                             opacity: 1,
                             rotate: tabletopMode ? (piece.color === 'b' ? 180 : 0) : 0
                           }}
                           exit={{ scale: 0.5, opacity: 0 }}
                           src={PIECES[`${piece.color}${piece.type}`]}
                           alt={`${piece.color}${piece.type}`}
-                          className="w-[85%] h-[85%] z-20 pointer-events-none"
+                          className={`w-[85%] h-[85%] z-20 pointer-events-none ${hasBongcloudAura ? 'drop-shadow-[0_0_10px_rgba(250,204,21,0.9)]' : ''}`}
                           referrerPolicy="no-referrer"
                         />
                       )}
                     </AnimatePresence>
+
+                    {/* Bongcloud Sunglasses */}
+                    {hasBongcloudAura && (
+                      <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none text-xl select-none">
+                        😎
+                      </div>
+                    )}
 
                     {/* Coordinates (only on edges) */}
                     {fIdx === 0 && (
@@ -699,8 +1085,8 @@ export default function App() {
 
           {/* Promotion Overlay */}
           <AnimatePresence>
-            {showPromotion && (
-              <motion.div 
+            {showPromotion && !cursedMode && (
+              <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -715,15 +1101,72 @@ export default function App() {
                         onClick={() => handlePromotion(type)}
                         className="p-2 hover:bg-zinc-700 rounded-xl transition-all hover:scale-110"
                       >
-                        <img 
-                          src={PIECES[`${turn}${type}`]} 
-                          alt={type} 
+                        <img
+                          src={PIECES[`${turn}${type}`]}
+                          alt={type}
                           className="w-16 h-16"
                           referrerPolicy="no-referrer"
                         />
                       </button>
                     ))}
                   </div>
+                </div>
+              </motion.div>
+            )}
+            {showPromotion && cursedMode && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+              >
+                <div className="bg-zinc-800 p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-4">
+                  <h2 className="text-lg font-bold flex items-center gap-2 text-purple-300">
+                    <Dices size={20} /> Wheel of Promotion Fate
+                  </h2>
+                  <div className="relative w-56 h-56">
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-20 w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-t-[16px] border-t-yellow-400 drop-shadow" />
+                    <motion.div
+                      className="relative w-full h-full rounded-full border-4 border-zinc-700 shadow-[0_0_30px_rgba(0,0,0,0.6)]"
+                      style={{
+                        background: `conic-gradient(from ${-180 / WHEEL_SEGMENTS.length}deg, ${WHEEL_SEGMENTS.map((_, i) => `${WHEEL_COLORS[i]} ${i * (360 / WHEEL_SEGMENTS.length)}deg ${(i + 1) * (360 / WHEEL_SEGMENTS.length)}deg`).join(', ')})`
+                      }}
+                      animate={{ rotate: wheelRotation }}
+                      transition={{ duration: 2.5, ease: [0.15, 0, 0.2, 1] }}
+                    >
+                      {WHEEL_SEGMENTS.map((seg, i) => {
+                        const segmentAngle = 360 / WHEEL_SEGMENTS.length;
+                        const angleRad = (i * segmentAngle * Math.PI) / 180;
+                        const radius = 36;
+                        const x = 50 + radius * Math.sin(angleRad);
+                        const y = 50 - radius * Math.cos(angleRad);
+                        return (
+                          <div
+                            key={seg.type}
+                            className="absolute w-10 h-10 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center"
+                            style={{ left: `${x}%`, top: `${y}%` }}
+                          >
+                            <img src={PIECES[`${turn}${seg.type}`]} alt={seg.label} className="w-8 h-8 drop-shadow-md" referrerPolicy="no-referrer" />
+                          </div>
+                        );
+                      })}
+                      <div className="absolute inset-0 m-auto w-6 h-6 rounded-full bg-zinc-900 border-2 border-zinc-600" />
+                    </motion.div>
+                  </div>
+                  {wheelResult ? (
+                    <p className="text-lg font-extrabold text-yellow-400 animate-pulse">
+                      🎉 {WHEEL_SEGMENTS.find(s => s.type === wheelResult)?.label}!
+                    </p>
+                  ) : (
+                    <button
+                      onClick={spinPromotionWheel}
+                      disabled={wheelSpinning}
+                      className="px-6 py-3 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl font-bold flex items-center gap-2 transition-all active:scale-95"
+                    >
+                      <Dices size={20} />
+                      {wheelSpinning ? 'Spinning...' : 'Spin the Wheel!'}
+                    </button>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -810,7 +1253,7 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
-        </div>
+        </motion.div>
 
         {/* White Player Area */}
         {!isEditing && (
@@ -818,7 +1261,7 @@ export default function App() {
             color="w" 
             timer={timers.w} 
             isTurn={turn === 'w'} 
-            inCheck={isCheck && turn === 'w' && !isGameOver}
+            checkStatus={isGameOver ? null : kingExposed.w ? 'exposed' : isCheck && turn === 'w' ? 'check' : null}
             onResign={() => handleResign('w')}
             onDrawOffer={() => handleDrawOffer('w')}
             drawOfferedByOpponent={drawOffer === 'b'}
@@ -843,6 +1286,76 @@ export default function App() {
 
       </motion.div>
 
+      {/* Rook Sacrifice Banner */}
+      <AnimatePresence>
+        {rookSacrifice && (
+          <motion.div
+            key={rookSacrifice.id}
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.2 }}
+            transition={{ duration: 0.3 }}
+            className="absolute inset-0 z-[75] flex items-center justify-center pointer-events-none px-6"
+            onAnimationComplete={() => {
+              setTimeout(() => setRookSacrifice(null), 1500);
+            }}
+          >
+            <p className="text-center text-3xl sm:text-5xl font-black uppercase tracking-tight text-red-500 drop-shadow-[0_0_18px_rgba(220,38,38,0.9)]" style={{ WebkitTextStroke: '1px black' }}>
+              AND HE sacrificed the ROOOOOKKKK
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* En Passant Jumpscare Flash */}
+      <AnimatePresence>
+        {enPassantFlash > 0 && (
+          <motion.div
+            key={enPassantFlash}
+            initial={{ opacity: 0.55 }}
+            animate={{ opacity: 0 }}
+            transition={{ duration: 0.35 }}
+            className="absolute inset-0 z-[74] bg-red-600 pointer-events-none"
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Queen Lost Toast */}
+      <AnimatePresence>
+        {queenLostToast > 0 && (
+          <motion.div
+            key={queenLostToast}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[74] pointer-events-none"
+            onAnimationComplete={() => {
+              setTimeout(() => setQueenLostToast(0), 1600);
+            }}
+          >
+            <p className="text-2xl sm:text-4xl font-black text-zinc-300 drop-shadow-lg">📯 Womp womp womp...</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Long-Think Hallucination */}
+      <AnimatePresence>
+        {hallucination && (
+          <motion.div
+            key={hallucination}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[74] pointer-events-none px-4 max-w-md"
+          >
+            <p className="flex items-center gap-2 text-center text-sm sm:text-base italic text-purple-300/90 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-full border border-purple-500/30">
+              <Ghost size={16} className="shrink-0" /> {hallucination}
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Settings Overlay (Global, not rotated) */}
       <AnimatePresence>
         {showSettings && (
@@ -860,11 +1373,29 @@ export default function App() {
                 <X size={20} />
               </button>
               
+              <div className="flex flex-col gap-3 pb-2 border-b border-zinc-800">
+                <button
+                  onClick={toggleCursedMode}
+                  className={`w-full flex items-center justify-between gap-3 p-3 rounded-xl transition-all ${cursedMode ? 'bg-purple-700/30 border border-purple-500/50' : 'bg-zinc-800 border border-transparent hover:bg-zinc-700'}`}
+                >
+                  <span className="flex items-center gap-2 font-bold">
+                    <Skull className={cursedMode ? 'text-purple-300' : 'text-zinc-400'} size={20} />
+                    Cursed Chess Mode
+                  </span>
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${cursedMode ? 'bg-purple-600 text-white' : 'bg-zinc-700 text-zinc-400'}`}>
+                    {cursedMode ? 'On' : 'Off'}
+                  </span>
+                </button>
+                <p className="text-xs text-zinc-500">
+                  No more check — kings can be captured outright, rook trades shake the screen, promotions are decided by a wheel of fate, and more. Toggling resets the current game.
+                </p>
+              </div>
+
               <h2 className="text-2xl font-bold flex items-center gap-2">
                 <Clock className="text-blue-400" />
                 Time Control
               </h2>
-              
+
               <div className="grid grid-cols-2 gap-3">
                 {[2, 3, 5, 10, 20].map(mins => (
                   <button
