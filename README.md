@@ -8,7 +8,8 @@ Das Spielbrett ist extra groß gestaltet und bietet praktische Features wie die 
 - **Optimal für Touch & Convertibles**: Die Benutzeroberfläche und interagierbaren Elemente (wie Schachfiguren) sind extra groß und für Touch-Eingaben auf 2-in-1 Geräten ausgelegt.
 - **Brett-Rotation**: Drehe das Schachfeld auf Knopfdruck oder automatisch nach jedem Zug, damit beide Spieler stets die richtige Perspektive haben.
 - **Lokaler Multiplayer ("Hot-Seat")**: Spiele ganz klassisch gegen einen Freund am selben Bildschirm.
-- **Cursed Chess Modus**: Ein optionaler Spezialmodus (Schädel-Symbol im Header oder in den Einstellungen) ohne Schach-Gebot – der König kann direkt geschlagen werden. Dazu: Bildschirm-Shake bei Turmopfern, ein Pin-Hinweis (auch im normalen Modus aktiv), ein Jumpscare-Sound bei En-passant, ein Glücksrad statt Bauern-Beförderungsmenü, ein "Womp womp"-Sound beim Damenverlust, Halluzinationen bei sehr langem Nachdenken und ein goldener Bongcloud-Buff für den König nach 1. e4 Ke2.
+- **Cursed Chess Modus**: Ein optionaler Spezialmodus (Schädel-Symbol im Header oder in den Einstellungen) ohne Schach-Gebot und ohne Warnung – der König kann direkt geschlagen werden, ohne dass irgendein Hinweis erscheint. Dazu: Bildschirm-Shake bei Turmopfern, ein Jumpscare-Sound bei En-passant, ein Glücksrad statt Bauern-Beförderungsmenü, ein "Womp womp"-Sound beim Damenverlust, Halluzinationen bei sehr langem Nachdenken und ein goldener Bongcloud-Buff für den König nach 1. e4 Ke2.
+- **Pin-Falle (auch im normalen Modus aktiv)**: Gepinnte Figuren werden nicht markiert – erst beim zweiten Versuch, sie trotzdem zu bewegen, erscheint ein Reaction-Meme als Warnung.
 
 ## Lokale Entwicklung
 

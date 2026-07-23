@@ -32,10 +32,10 @@ import {
   Volume2,
   VolumeX,
   Skull,
-  Pin,
   Ghost,
   Dices
 } from 'lucide-react';
+import pinnedMemeImg from './assets/pinned-meme-placeholder.png';
 
 // --- Subcomponents ---
 const PlayerArea = ({ color, timer, isTurn, checkStatus, onResign, onDrawOffer, drawOfferedByOpponent, onDrawAcceptClick, rotated }: any) => {
@@ -49,11 +49,6 @@ const PlayerArea = ({ color, timer, isTurn, checkStatus, onResign, onDrawOffer, 
         {checkStatus === 'check' && (
           <div className="px-3 py-1.5 text-sm font-extrabold tracking-wide uppercase rounded-lg bg-red-600/90 text-white shadow-[0_0_12px_rgba(220,38,38,0.6)] animate-pulse">
             Check
-          </div>
-        )}
-        {checkStatus === 'exposed' && (
-          <div className="px-3 py-1.5 text-sm font-extrabold tracking-wide uppercase rounded-lg bg-orange-600/90 text-white shadow-[0_0_12px_rgba(234,88,12,0.7)] animate-pulse flex items-center gap-1.5">
-            <Skull size={16} /> King Exposed
           </div>
         )}
       </div>
@@ -294,6 +289,11 @@ export default function App() {
   const [wheelRotation, setWheelRotation] = useState(0);
   const [wheelResult, setWheelResult] = useState<PieceSymbol | null>(null);
 
+  // Pin reaction meme (standard + cursed chess): no persistent badge -- only
+  // trying to move the same pinned piece a second time in a row calls it out.
+  const [pinMemeId, setPinMemeId] = useState(0);
+  const pinAttemptsRef = useRef<Map<string, number>>(new Map());
+
   const lastProcessedMoveCountRef = useRef(0);
   const lastMoveTimeRef = useRef(Date.now());
 
@@ -301,19 +301,9 @@ export default function App() {
   const board = useMemo(() => game.board(), [game, trigger]);
   const turn = game.turn();
   const isGameOver = !isEditing && (customGameOver !== null || (!cursedMode && game.isGameOver()));
+  // No check indicator in cursed mode by design -- a king in danger gives no
+  // warning at all, which is the whole point of the mode.
   const isCheck = !cursedMode && game.inCheck();
-  // Unlike game.inCheck() (which only ever reflects the side to move), cursed
-  // mode lets a king stay exposed across a whole extra turn, so both colors
-  // need to be checked independently of whose move it currently is.
-  const kingExposed = useMemo(() => {
-    if (!cursedMode || isEditing) return { w: false, b: false };
-    const wKingSquare = kingSquareOf(board, 'w');
-    const bKingSquare = kingSquareOf(board, 'b');
-    return {
-      w: wKingSquare ? game.isAttacked(wKingSquare, 'b') : false,
-      b: bKingSquare ? game.isAttacked(bKingSquare, 'w') : false,
-    };
-  }, [board, game, cursedMode, isEditing]);
   const audioContextRef = React.useRef<AudioContext | null>(null);
 
   // Runs `fn` with king-safety legality checks disabled, so chess.js will generate
@@ -485,6 +475,11 @@ export default function App() {
   useEffect(() => {
     lastMoveTimeRef.current = Date.now();
     setHallucination(null);
+  }, [trigger]);
+
+  // Give every pinned piece a fresh "first attempt" after each move/edit.
+  useEffect(() => {
+    pinAttemptsRef.current.clear();
   }, [trigger]);
 
   useEffect(() => {
@@ -717,6 +712,12 @@ export default function App() {
       if (selectedSquare === square) {
         setSelectedSquare(null);
         return;
+      }
+
+      if (pinnedSquares.has(selectedSquare)) {
+        const attempts = (pinAttemptsRef.current.get(selectedSquare) ?? 0) + 1;
+        pinAttemptsRef.current.set(selectedSquare, attempts);
+        if (attempts >= 2) setPinMemeId(id => id + 1);
       }
 
       const moveAttempt = {
@@ -972,7 +973,7 @@ export default function App() {
             color="b"
             timer={timers.b}
             isTurn={turn === 'b'}
-            checkStatus={isGameOver ? null : kingExposed.b ? 'exposed' : isCheck && turn === 'b' ? 'check' : null}
+            checkStatus={isGameOver ? null : isCheck && turn === 'b' ? 'check' : null}
             onResign={() => handleResign('b')}
             onDrawOffer={() => handleDrawOffer('b')}
             drawOfferedByOpponent={drawOffer === 'w'}
@@ -997,7 +998,6 @@ export default function App() {
                 const isSelected = selectedSquare === square;
                 const isValidMove = validMoves.includes(square);
                 const isLastMove = lastMove && (lastMove.from === square || lastMove.to === square);
-                const isPinned = pinnedSquares.has(square);
                 const hasBongcloudAura = !!piece && piece.type === 'k' && bongcloud[piece.color];
 
                 return (
@@ -1008,7 +1008,6 @@ export default function App() {
                       relative flex items-center justify-center cursor-pointer touch-none
                       ${isLight ? 'square-light' : 'square-dark'}
                       ${isSelected ? 'ring-4 ring-inset ring-blue-400 z-10' : ''}
-                      ${isPinned ? 'ring-2 ring-inset ring-red-500/70' : ''}
                     `}
                   >
                     {/* Last Move Highlight */}
@@ -1020,13 +1019,6 @@ export default function App() {
                         absolute w-4 h-4 rounded-full pointer-events-none
                         ${piece ? 'border-4 border-black/20 w-full h-full rounded-none' : 'bg-black/10'}
                       `} />
-                    )}
-
-                    {/* Pinned Piece Badge */}
-                    {isPinned && (
-                      <div className="absolute top-0.5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-600/90 text-white text-[9px] font-extrabold uppercase tracking-wide shadow-[0_0_8px_rgba(220,38,38,0.7)] pointer-events-none">
-                        <Pin size={9} /> Pinned
-                      </div>
                     )}
 
                     {/* Bongcloud King Aura */}
@@ -1261,7 +1253,7 @@ export default function App() {
             color="w" 
             timer={timers.w} 
             isTurn={turn === 'w'} 
-            checkStatus={isGameOver ? null : kingExposed.w ? 'exposed' : isCheck && turn === 'w' ? 'check' : null}
+            checkStatus={isGameOver ? null : isCheck && turn === 'w' ? 'check' : null}
             onResign={() => handleResign('w')}
             onDrawOffer={() => handleDrawOffer('w')}
             drawOfferedByOpponent={drawOffer === 'b'}
@@ -1335,6 +1327,29 @@ export default function App() {
             }}
           >
             <p className="text-2xl sm:text-4xl font-black text-zinc-300 drop-shadow-lg">📯 Womp womp womp...</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Pinned Piece Meme (2nd+ attempt to move a pinned piece) */}
+      <AnimatePresence>
+        {pinMemeId > 0 && (
+          <motion.div
+            key={pinMemeId}
+            initial={{ opacity: 0, scale: 0.7, rotate: -6 }}
+            animate={{ opacity: 1, scale: 1, rotate: 0 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            transition={{ duration: 0.25, ease: 'easeOut' }}
+            className="absolute inset-0 z-[76] flex items-center justify-center pointer-events-none px-6"
+            onAnimationComplete={() => {
+              setTimeout(() => setPinMemeId(0), 1800);
+            }}
+          >
+            <img
+              src={pinnedMemeImg}
+              alt="Pinned!"
+              className="max-w-[min(80vw,320px)] rounded-2xl shadow-2xl border-4 border-red-600"
+            />
           </motion.div>
         )}
       </AnimatePresence>
