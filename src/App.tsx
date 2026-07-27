@@ -33,7 +33,12 @@ import {
   VolumeX,
   Skull,
   Ghost,
-  Dices
+  Dices,
+  WandSparkles,
+  Sword,
+  Flame,
+  Shuffle,
+  Sparkles
 } from 'lucide-react';
 import pinnedMemeImg from './assets/pinned-meme-placeholder.png';
 
@@ -144,6 +149,7 @@ const EditPalette = ({ editTool, setEditTool, turn, setTurn, clearBoard, resetBo
 type Square = string;
 type PieceSymbol = 'p' | 'n' | 'b' | 'r' | 'q' | 'k';
 type Color = 'w' | 'b';
+type Curse = 'fireball' | 'hex' | 'swap' | 'excalibur';
 
 interface Piece {
   type: PieceSymbol;
@@ -193,6 +199,13 @@ const WHEEL_SEGMENTS: { type: PieceSymbol; label: string }[] = [
 ];
 
 const WHEEL_COLORS = ['#7c3aed', '#dc2626', '#0891b2', '#ca8a04', '#16a34a'];
+
+const CURSE_BOOK: { id: Curse; label: string; cost: number; icon: React.ReactNode; help: string }[] = [
+  { id: 'fireball', label: 'Fireball', cost: 3, icon: <Flame size={18} />, help: 'Delete one enemy piece. Kings are fireproof (lame).' },
+  { id: 'hex', label: 'Pawnify', cost: 2, icon: <WandSparkles size={18} />, help: 'Turn an enemy piece into a deeply disappointed pawn.' },
+  { id: 'swap', label: 'Quantum Swap', cost: 2, icon: <Shuffle size={18} />, help: 'Choose two of your pieces and swap their atoms.' },
+  { id: 'excalibur', label: 'Excalibur', cost: 3, icon: <Sword size={18} />, help: 'Promote any friendly non-king piece to a queen. Balanced.' },
+];
 
 function kingSquareOf(board: ReturnType<Chess['board']>, color: Color): Square | null {
   for (let r = 0; r < 8; r++) {
@@ -288,6 +301,11 @@ export default function App() {
   const [wheelSpinning, setWheelSpinning] = useState(false);
   const [wheelRotation, setWheelRotation] = useState(0);
   const [wheelResult, setWheelResult] = useState<PieceSymbol | null>(null);
+  const [mana, setMana] = useState<{ w: number; b: number }>({ w: 3, b: 3 });
+  const [activeCurse, setActiveCurse] = useState<Curse | null>(null);
+  const [curseFirstSquare, setCurseFirstSquare] = useState<string | null>(null);
+  const [curseToast, setCurseToast] = useState<string | null>(null);
+  const [spellUsedAt, setSpellUsedAt] = useState<string | null>(null);
 
   // Pin reaction meme (standard + cursed chess): no persistent badge -- only
   // trying to move the same pinned piece a second time in a row calls it out.
@@ -438,6 +456,9 @@ export default function App() {
     const hist = game.history({ verbose: true }) as Move[];
     if (hist.length > lastProcessedMoveCountRef.current) {
       const last = hist[hist.length - 1];
+      // Moving recharges the player's cursed battery. Casting remains limited
+      // to one spell per turn, regardless of available mana.
+      setMana(prev => ({ ...prev, [last.color]: Math.min(5, prev[last.color] + 1) }));
       if (last.captured === 'r') {
         setRookSacrifice({ id: Date.now(), color: last.color });
         playSound('rookSacrifice');
@@ -600,6 +621,11 @@ export default function App() {
     setHallucination(null);
     setWheelSpinning(false);
     setWheelResult(null);
+    setMana({ w: 3, b: 3 });
+    setActiveCurse(null);
+    setCurseFirstSquare(null);
+    setCurseToast(null);
+    setSpellUsedAt(null);
     lastProcessedMoveCountRef.current = 0;
     lastMoveTimeRef.current = Date.now();
     forceUpdate();
@@ -717,6 +743,59 @@ export default function App() {
     }
 
     if (isGameOver) return;
+
+    // Cursed Extreme spell targeting deliberately mutates the board outside of
+    // normal chess rules. A spell is a bonus action, but only one may be cast
+    // during a turn so the tabletop does not become a button-mashing contest.
+    if (cursedMode && activeCurse) {
+      const spell = CURSE_BOOK.find(item => item.id === activeCurse)!;
+      const piece = game.get(square as any);
+      const fail = (message: string) => setCurseToast(message);
+      const finish = (message: string) => {
+        setMana(prev => ({ ...prev, [turn]: prev[turn] - spell.cost }));
+        setSpellUsedAt(`${turn}-${game.history().length}`);
+        setActiveCurse(null);
+        setCurseFirstSquare(null);
+        setSelectedSquare(null);
+        setCurseToast(message);
+        forceUpdate();
+      };
+
+      if (activeCurse === 'swap') {
+        if (!piece || piece.color !== turn) return fail('🌀 The quantum warranty only covers your own pieces.');
+        if (!curseFirstSquare) {
+          setCurseFirstSquare(square);
+          return fail('🌀 First atom locked. Pick another friendly piece.');
+        }
+        if (curseFirstSquare === square) return fail('🌀 Swapping a piece with itself achieves absolutely nothing.');
+        const firstPiece = game.get(curseFirstSquare as any)!;
+        game.remove(curseFirstSquare as any);
+        game.remove(square as any);
+        game.put(piece as any, curseFirstSquare as any);
+        game.put(firstPiece as any, square as any);
+        finish('🌀 QUANTUM ENTANGLEMENT! The arbiter has resigned.');
+        return;
+      }
+
+      if (!piece) return fail('The void cannot be cursed. It already has tenure.');
+      if (piece.type === 'k') return fail('👑 Royal plot armor blocked the spell. Try violence the old-fashioned way.');
+      if (activeCurse === 'fireball') {
+        if (piece.color === turn) return fail('🔥 Friendly fire is disabled by your mom.');
+        game.remove(square as any);
+        finish('🔥 FIREBALL! That piece has been sent to the shadow realm.');
+      } else if (activeCurse === 'hex') {
+        if (piece.color === turn) return fail('🐸 You may only pawnify an enemy. Have standards.');
+        game.remove(square as any);
+        game.put({ type: 'p', color: piece.color } as any, square as any);
+        finish('🐸 Career update: that piece is now an unpaid pawn.');
+      } else if (activeCurse === 'excalibur') {
+        if (piece.color !== turn) return fail('⚔️ Excalibur refuses to buff the enemy. Surprisingly sensible.');
+        game.remove(square as any);
+        game.put({ type: 'q', color: piece.color } as any, square as any);
+        finish('⚔️ EXCALIBUR! We have a queen surplus and zero regrets.');
+      }
+      return;
+    }
 
     // If a square is already selected, try to move
     if (selectedSquare) {
@@ -1293,6 +1372,61 @@ export default function App() {
 
       </motion.div>
 
+      {/* Cursed Extreme spell book — intentionally global so it stays readable
+          while the physical board is rotated for tabletop play. */}
+      <AnimatePresence>
+        {cursedMode && !isEditing && !isGameOver && (
+          <motion.aside
+            initial={{ opacity: 0, x: 30 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 30 }}
+            className="cursed-spellbook absolute right-3 top-20 z-[65] w-52 rounded-2xl border border-fuchsia-500/60 bg-zinc-950/90 p-3 shadow-[0_0_35px_rgba(192,38,211,0.3)] backdrop-blur-md"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-fuchsia-300"><Sparkles size={15} /> Extreme</span>
+              <span className="rounded-full bg-cyan-500/15 px-2 py-1 text-xs font-bold text-cyan-300">🔮 {mana[turn]}/5</span>
+            </div>
+            <p className="mb-2 text-[10px] leading-tight text-zinc-500">{turn === 'w' ? 'White' : 'Black'} may cast one illegal bonus action this turn.</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {CURSE_BOOK.map(spell => {
+                const used = spellUsedAt === `${turn}-${game.history().length}`;
+                const disabled = mana[turn] < spell.cost || used;
+                return (
+                  <button
+                    key={spell.id}
+                    disabled={disabled}
+                    title={spell.help}
+                    onClick={() => {
+                      setActiveCurse(current => current === spell.id ? null : spell.id);
+                      setCurseFirstSquare(null);
+                      setCurseToast(activeCurse === spell.id ? null : `Choose a target: ${spell.help}`);
+                    }}
+                    className={`flex min-h-14 flex-col items-center justify-center rounded-xl border p-1 text-[10px] font-bold transition-all disabled:cursor-not-allowed disabled:opacity-25 ${activeCurse === spell.id ? 'border-fuchsia-300 bg-fuchsia-600 text-white animate-pulse' : 'border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-fuchsia-500 hover:bg-fuchsia-950'}`}
+                  >
+                    {spell.icon}<span>{spell.label}</span><span className="text-cyan-400">{spell.cost} mana</span>
+                  </button>
+                );
+              })}
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {curseToast && cursedMode && (
+          <motion.button
+            key={curseToast}
+            initial={{ opacity: 0, y: -15, scale: .9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setCurseToast(null)}
+            className="absolute left-1/2 top-20 z-[80] max-w-sm -translate-x-1/2 rounded-xl border border-fuchsia-400/50 bg-black/90 px-4 py-2 text-center text-sm font-bold text-fuchsia-200 shadow-[0_0_25px_rgba(217,70,239,.35)]"
+          >
+            {curseToast}
+          </motion.button>
+        )}
+      </AnimatePresence>
+
       {/* Rook Sacrifice Banner */}
       <AnimatePresence>
         {rookSacrifice && (
@@ -1410,14 +1544,14 @@ export default function App() {
                 >
                   <span className="flex items-center gap-2 font-bold">
                     <Skull className={cursedMode ? 'text-purple-300' : 'text-zinc-400'} size={20} />
-                    Cursed Chess Mode
+                    Cursed Chess: EXTREME
                   </span>
                   <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${cursedMode ? 'bg-purple-600 text-white' : 'bg-zinc-700 text-zinc-400'}`}>
                     {cursedMode ? 'On' : 'Off'}
                   </span>
                 </button>
                 <p className="text-xs text-zinc-500">
-                  No more check — kings can be captured outright, rook trades shake the screen, promotions are decided by a wheel of fate, and more. Toggling resets the current game.
+                  No check, capturable kings, spell casting, fireballs, weapon upgrades, quantum swaps, pawnification, cursed promotion roulette and deeply unnecessary sound effects. Toggling resets the game.
                 </p>
               </div>
 

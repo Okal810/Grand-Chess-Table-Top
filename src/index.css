@@ -36,3 +36,24 @@
 .square-last-move {
   background-color: rgba(255, 255, 0, 0.2);
 }
+
+.cursed-spellbook {
+  animation: cursed-hue 7s linear infinite;
+}
+
+@keyframes cursed-hue {
+  0%, 100% { box-shadow: 0 0 35px rgba(192, 38, 211, .3); }
+  33% { box-shadow: 0 0 35px rgba(6, 182, 212, .32); }
+  66% { box-shadow: 0 0 35px rgba(239, 68, 68, .32); }
+}
+
+@media (max-width: 900px) {
+  .cursed-spellbook {
+    top: auto;
+    right: .5rem;
+    bottom: .5rem;
+    width: 10.5rem;
+    transform: scale(.88);
+    transform-origin: bottom right;
+  }
+}
